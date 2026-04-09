@@ -17,7 +17,7 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'tagmind-app';
+const appId = 'tagmind-app'; // 直接給定一個固定的應用程式 ID
 
 // 顏色生成器 (根據標籤名稱生成固定顏色)
 const getTagColor = (tag) => {
