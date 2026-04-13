@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Plus, Search, Network, Grid, Tag, X, Save, Trash2, Edit3, ArrowLeft, Eye } from 'lucide-react';
+import { Plus, Search, Network, Grid, Tag, X, Save, Trash2, Edit3, ArrowLeft, Eye, LogIn, LogOut, User } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { getAuth, signInAnonymously, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, linkWithPopup, signOut } from 'firebase/auth';
 import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 
 // --- 將此處替換為您的 Firebase 設定 ---
@@ -19,22 +19,16 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = 'tagmind-app'; 
 
-// 顏色生成器 (根據標籤名稱產生固定顏色)
+// 顏色生成器 
 const getTagColor = (tag) => {
   const colors = [
-    'bg-red-100 text-red-700 border-red-200',
-    'bg-blue-100 text-blue-700 border-blue-200',
-    'bg-green-100 text-green-700 border-green-200',
-    'bg-yellow-100 text-yellow-700 border-yellow-200',
-    'bg-purple-100 text-purple-700 border-purple-200',
-    'bg-pink-100 text-pink-700 border-pink-200',
-    'bg-indigo-100 text-indigo-700 border-indigo-200',
-    'bg-orange-100 text-orange-700 border-orange-200',
+    'bg-red-100 text-red-700 border-red-200', 'bg-blue-100 text-blue-700 border-blue-200',
+    'bg-green-100 text-green-700 border-green-200', 'bg-yellow-100 text-yellow-700 border-yellow-200',
+    'bg-purple-100 text-purple-700 border-purple-200', 'bg-pink-100 text-pink-700 border-pink-200',
+    'bg-indigo-100 text-indigo-700 border-indigo-200', 'bg-orange-100 text-orange-700 border-orange-200',
   ];
   let hash = 0;
-  for (let i = 0; i < tag.length; i++) {
-    hash = tag.charCodeAt(i) + ((hash << 5) - hash);
-  }
+  for (let i = 0; i < tag.length; i++) hash = tag.charCodeAt(i) + ((hash << 5) - hash);
   return colors[Math.abs(hash) % colors.length];
 };
 
@@ -45,45 +39,24 @@ const NetworkGraph = ({ cards, onNodeClick }) => {
   
   const { nodes, links } = useMemo(() => {
     const nodes = cards.map(card => ({
-      ...card,
-      x: Math.random() * 800,
-      y: Math.random() * 600,
-      vx: 0, 
-      vy: 0,
-      radius: 30 + (card.tags.length * 2) 
+      ...card, x: Math.random() * 800, y: Math.random() * 600, vx: 0, vy: 0, radius: 30 + (card.tags.length * 2) 
     }));
-
     const uniqueLinks = new Map();
 
-    // 1. 相同標籤連線
     for (let i = 0; i < nodes.length; i++) {
       for (let j = i + 1; j < nodes.length; j++) {
         const intersection = nodes[i].tags.filter(t => nodes[j].tags.includes(t));
-        if (intersection.length > 0) {
-          uniqueLinks.set(`${i}-${j}`, { 
-            source: i, 
-            target: j, 
-            type: 'tag', 
-            strength: intersection.length 
-          });
-        }
+        if (intersection.length > 0) uniqueLinks.set(`${i}-${j}`, { source: i, target: j, type: 'tag', strength: intersection.length });
       }
     }
 
-    // 2. 雙向連結連線 [[標題]]
     nodes.forEach((node, i) => {
        const linkMatches = [...(node.content || '').matchAll(/\[\[(.*?)\]\]/g)].map(m => m[1]);
        linkMatches.forEach(targetTitle => {
            const targetIndex = nodes.findIndex(n => n.title === targetTitle);
            if (targetIndex !== -1 && targetIndex !== i) {
-               const minId = Math.min(i, targetIndex);
-               const maxId = Math.max(i, targetIndex);
-               uniqueLinks.set(`${minId}-${maxId}`, { 
-                 source: minId, 
-                 target: maxId, 
-                 type: 'explicit', 
-                 strength: 3 
-               });
+               const minId = Math.min(i, targetIndex), maxId = Math.max(i, targetIndex);
+               uniqueLinks.set(`${minId}-${maxId}`, { source: minId, target: maxId, type: 'explicit', strength: 3 });
            }
        });
     });
@@ -106,8 +79,7 @@ const NetworkGraph = ({ cards, onNodeClick }) => {
     resize();
 
     const animate = () => {
-      const width = canvas.width;
-      const height = canvas.height;
+      const width = canvas.width, height = canvas.height;
       const repulsion = 1000, springLength = 150, k = 0.05, damping = 0.9, centerForce = 0.005; 
 
       nodes.forEach(node => {
@@ -117,8 +89,7 @@ const NetworkGraph = ({ cards, onNodeClick }) => {
 
       for (let i = 0; i < nodes.length; i++) {
         for (let j = i + 1; j < nodes.length; j++) {
-          const dx = nodes[j].x - nodes[i].x;
-          const dy = nodes[j].y - nodes[i].y;
+          const dx = nodes[j].x - nodes[i].x, dy = nodes[j].y - nodes[i].y;
           let dist = Math.sqrt(dx * dx + dy * dy);
           if (dist === 0) dist = 0.1;
           const force = repulsion / (dist * dist);
@@ -139,11 +110,8 @@ const NetworkGraph = ({ cards, onNodeClick }) => {
       });
 
       nodes.forEach(node => {
-        node.vx = (node.vx + node.fx) * damping; 
-        node.vy = (node.vy + node.fy) * damping;
-        node.x += node.vx; 
-        node.y += node.vy;
-        
+        node.vx = (node.vx + node.fx) * damping; node.vy = (node.vy + node.fy) * damping;
+        node.x += node.vx; node.y += node.vy;
         if(node.x < node.radius) node.x = node.radius;
         if(node.x > width - node.radius) node.x = width - node.radius;
         if(node.y < node.radius) node.y = node.radius;
@@ -154,46 +122,24 @@ const NetworkGraph = ({ cards, onNodeClick }) => {
 
       links.forEach(link => {
         const source = nodes[link.source], target = nodes[link.target];
-        ctx.beginPath(); 
-        ctx.moveTo(source.x, source.y); 
-        ctx.lineTo(target.x, target.y);
-        
+        ctx.beginPath(); ctx.moveTo(source.x, source.y); ctx.lineTo(target.x, target.y);
         if (link.type === 'explicit') {
-            ctx.strokeStyle = '#818cf8'; 
-            ctx.lineWidth = 2.5; 
-            ctx.setLineDash([6, 6]); 
+            ctx.strokeStyle = '#818cf8'; ctx.lineWidth = 2.5; ctx.setLineDash([6, 6]); 
         } else {
-            ctx.strokeStyle = '#cbd5e1'; 
-            ctx.lineWidth = 1.5; 
-            ctx.setLineDash([]); 
+            ctx.strokeStyle = '#cbd5e1'; ctx.lineWidth = 1.5; ctx.setLineDash([]); 
         }
-        ctx.stroke(); 
-        ctx.setLineDash([]); 
+        ctx.stroke(); ctx.setLineDash([]); 
       });
 
       nodes.forEach(node => {
-        ctx.beginPath(); 
-        ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2);
-        ctx.fillStyle = '#ffffff'; 
-        ctx.fill(); 
-        ctx.strokeStyle = '#3b82f6'; 
-        ctx.lineWidth = 3; 
-        ctx.stroke();
-        
-        ctx.fillStyle = '#1e293b'; 
-        ctx.font = '14px sans-serif'; 
-        ctx.textAlign = 'center'; 
-        ctx.textBaseline = 'middle';
+        ctx.beginPath(); ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2);
+        ctx.fillStyle = '#ffffff'; ctx.fill(); ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 3; ctx.stroke();
+        ctx.fillStyle = '#1e293b'; ctx.font = '14px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         const label = node.title.length > 5 ? node.title.substring(0, 5) + '...' : node.title;
         ctx.fillText(label, node.x, node.y);
-        
         if (node.tags.length > 0) {
-            ctx.beginPath(); 
-            ctx.arc(node.x + node.radius * 0.7, node.y - node.radius * 0.7, 8, 0, Math.PI * 2);
-            ctx.fillStyle = '#ef4444'; 
-            ctx.fill(); 
-            ctx.fillStyle = 'white'; 
-            ctx.font = '10px sans-serif';
+            ctx.beginPath(); ctx.arc(node.x + node.radius * 0.7, node.y - node.radius * 0.7, 8, 0, Math.PI * 2);
+            ctx.fillStyle = '#ef4444'; ctx.fill(); ctx.fillStyle = 'white'; ctx.font = '10px sans-serif';
             ctx.fillText(node.tags.length, node.x + node.radius * 0.7, node.y - node.radius * 0.7);
         }
       });
@@ -241,18 +187,44 @@ export default function TagMindApp() {
   const [historyStack, setHistoryStack] = useState([]); 
   
   const [tagInput, setTagInput] = useState('');
-  const [isTagInputFocused, setIsTagInputFocused] = useState(false); // 新增：控制下拉選單顯示
+  const [isTagInputFocused, setIsTagInputFocused] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
 
+  // --- Auth 登入與狀態監聽 ---
   useEffect(() => {
-    const initAuth = async () => {
-      try { await signInAnonymously(auth); } 
-      catch (err) { console.error("Auth error:", err); }
-    };
-    initAuth();
-    const unsubscribe = onAuthStateChanged(auth, setUser);
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      if (currentUser) {
+        setUser(currentUser);
+      } else {
+        // 若沒有任何登入狀態，預設給予匿名登入方便體驗
+        signInAnonymously(auth).catch(err => console.error("匿名登入失敗:", err));
+      }
+    });
     return () => unsubscribe();
   }, []);
+
+  // 處理 Google 登入或綁定帳號
+  const handleGoogleLogin = async () => {
+    const provider = new GoogleAuthProvider();
+    try {
+      if (user && user.isAnonymous) {
+        // 將當前的匿名帳號「綁定」到 Google，這樣舊資料才不會消失
+        await linkWithPopup(user, provider);
+        alert("綁定成功！您的資料已安全同步至 Google 帳號。");
+      } else {
+        // 一般登入
+        await signInWithPopup(auth, provider);
+      }
+    } catch (error) {
+      console.error("登入錯誤:", error);
+      // 有時候綁定失敗是因為該 Google 帳號已經被註冊過
+      if (error.code === 'auth/credential-already-in-use') {
+         await signInWithPopup(auth, provider);
+      } else {
+         alert("登入失敗，請確認已在 Firebase 啟用 Google 登入並設定白名單。");
+      }
+    }
+  };
 
   useEffect(() => {
     if (!user) return;
@@ -263,26 +235,17 @@ export default function TagMindApp() {
     return () => unsubscribe();
   }, [user]);
 
-  // 熱門標籤統計
   const allTags = useMemo(() => {
     const counts = {};
     cards.forEach(card => card.tags.forEach(tag => { counts[tag] = (counts[tag] || 0) + 1; }));
     return Object.entries(counts).sort((a, b) => b[1] - a[1]); 
   }, [cards]);
 
-  // 進階版：防呆標籤建議邏輯
   const suggestedTags = useMemo(() => {
     const lowerInput = tagInput.trim().toLowerCase();
     const availableTags = allTags.map(([tag]) => tag).filter(tag => !currentCard.tags.includes(tag));
-    
-    if (!lowerInput) {
-        // 如果還沒打字，直接顯示最常用的前 5 個標籤供點選
-        return availableTags.slice(0, 5);
-    }
-    // 如果有打字，就根據字串去過濾符合的標籤
-    return availableTags
-      .filter(tag => tag.toLowerCase().includes(lowerInput))
-      .slice(0, 5); 
+    if (!lowerInput) return availableTags.slice(0, 5);
+    return availableTags.filter(tag => tag.toLowerCase().includes(lowerInput)).slice(0, 5); 
   }, [tagInput, allTags, currentCard.tags]);
 
   const filteredCards = useMemo(() => {
@@ -310,7 +273,7 @@ export default function TagMindApp() {
         const { id, ...dataToSave } = currentCard;
         await addDoc(cardsRef, { ...dataToSave, createdAt: Date.now() });
       }
-      setModalMode('view'); // 儲存後自動切換為閱讀模式以顯示排版
+      setModalMode('view'); 
       setTagInput('');
     } catch (error) { console.error("Error saving card:", error); }
   };
@@ -328,16 +291,9 @@ export default function TagMindApp() {
   };
 
   const openCardModal = (card = null) => {
-    if (card) { 
-        setCurrentCard(card); 
-        setModalMode('view'); 
-    } else { 
-        setCurrentCard({ id: null, title: '', content: '', tags: [] }); 
-        setModalMode('edit'); 
-    }
-    setTagInput(''); 
-    setIsModalOpen(true); 
-    setHistoryStack([]); 
+    if (card) { setCurrentCard(card); setModalMode('view'); } 
+    else { setCurrentCard({ id: null, title: '', content: '', tags: [] }); setModalMode('edit'); }
+    setTagInput(''); setIsModalOpen(true); setHistoryStack([]); 
   };
 
   const closeModal = () => { setIsModalOpen(false); setHistoryStack([]); };
@@ -345,13 +301,8 @@ export default function TagMindApp() {
   const handleLinkClick = (targetTitle) => {
     const targetCard = cards.find(c => c.title === targetTitle);
     setHistoryStack(prev => [...prev, currentCard]);
-    if (targetCard) { 
-        setCurrentCard(targetCard); 
-        setModalMode('view'); 
-    } else { 
-        setCurrentCard({ id: null, title: targetTitle, content: '', tags: [] }); 
-        setModalMode('edit'); 
-    }
+    if (targetCard) { setCurrentCard(targetCard); setModalMode('view'); } 
+    else { setCurrentCard({ id: null, title: targetTitle, content: '', tags: [] }); setModalMode('edit'); }
   };
 
   const handleBack = () => {
@@ -366,8 +317,7 @@ export default function TagMindApp() {
     const newTag = tagToAdd.trim();
     if (newTag && !currentCard.tags.includes(newTag)) {
       setCurrentCard({ ...currentCard, tags: [...currentCard.tags, newTag] });
-      setTagInput('');
-      setIsTagInputFocused(false); // 加完標籤後隱藏下拉
+      setTagInput(''); setIsTagInputFocused(false); 
     }
   };
 
@@ -375,37 +325,19 @@ export default function TagMindApp() {
     setCurrentCard({ ...currentCard, tags: currentCard.tags.filter(t => t !== tagToRemove) });
   };
 
-  // 進階版：內容排版解析器 (更寬鬆、更精準的正則表達式)
   const renderFormattedContent = (text) => {
     if (!text) return <span className="text-slate-400 italic">尚未填寫內容...</span>;
-    
     return text.split('\n').map((line, lineIndex) => {
-      let content = line;
-      let type = 'text';
-      let prefix = '';
-      
-      // 偵測行首的縮排空白，用於保留階層感
+      let content = line, type = 'text', prefix = '';
       const indentMatch = content.match(/^(\s*)/);
       const spaces = indentMatch ? indentMatch[1].length : 0;
-      content = content.trimStart(); // 移除行首空白，方便後續比對
+      content = content.trimStart(); 
 
-      // 判斷列表或 Checkbox 語法 (容許一些格式變化)
-      if (content.match(/^[-*]\s+\[\s\]\s+/)) {
-          type = 'checkbox';
-          content = content.replace(/^[-*]\s+\[\s\]\s+/, '');
-      } else if (content.match(/^[-*]\s+\[[xX]\]\s+/)) {
-          type = 'checked';
-          content = content.replace(/^[-*]\s+\[[xX]\]\s+/, '');
-      } else if (content.match(/^[-*]\s+/)) {
-          type = 'bullet';
-          content = content.replace(/^[-*]\s+/, '');
-      } else if (content.match(/^\d+\.\s+/)) {
-          type = 'numbered';
-          prefix = content.match(/^\d+\.\s+/)[0]; // 抓出原本的數字
-          content = content.replace(/^\d+\.\s+/, '');
-      }
+      if (content.match(/^[-*]\s+\[\s\]\s+/)) { type = 'checkbox'; content = content.replace(/^[-*]\s+\[\s\]\s+/, ''); } 
+      else if (content.match(/^[-*]\s+\[[xX]\]\s+/)) { type = 'checked'; content = content.replace(/^[-*]\s+\[[xX]\]\s+/, ''); } 
+      else if (content.match(/^[-*]\s+/)) { type = 'bullet'; content = content.replace(/^[-*]\s+/, ''); } 
+      else if (content.match(/^\d+\.\s+/)) { type = 'numbered'; prefix = content.match(/^\d+\.\s+/)[0]; content = content.replace(/^\d+\.\s+/, ''); }
 
-      // 解析行內的 [[雙向連結]]
       const parts = content.split(/\[\[(.*?)\]\]/g);
       const renderedLine = parts.map((part, i) => {
         if (i % 2 === 1) {
@@ -422,33 +354,12 @@ export default function TagMindApp() {
         return <span key={i}>{part}</span>;
       });
 
-      // 依據類型渲染出帶有設計感的 HTML 區塊
       return (
         <div key={lineIndex} className="min-h-[1.5rem] my-0.5" style={{ paddingLeft: `${spaces * 0.5}rem` }}>
-           {type === 'checkbox' && (
-              <label className="flex items-start gap-2 group">
-                 <input type="checkbox" disabled className="mt-1 w-4 h-4 text-indigo-600 rounded border-slate-300" />
-                 <span>{renderedLine}</span>
-              </label>
-           )}
-           {type === 'checked' && (
-              <label className="flex items-start gap-2 group">
-                 <input type="checkbox" checked disabled className="mt-1 w-4 h-4 text-indigo-600 rounded border-slate-300" />
-                 <span className="line-through text-slate-400">{renderedLine}</span>
-              </label>
-           )}
-           {type === 'bullet' && (
-              <div className="flex items-start gap-2 pl-1">
-                 <span className="text-slate-400 font-bold">•</span>
-                 <span>{renderedLine}</span>
-              </div>
-           )}
-           {type === 'numbered' && (
-              <div className="flex items-start gap-2">
-                 <span className="text-slate-500 font-medium w-5 shrink-0 text-right">{prefix}</span>
-                 <span>{renderedLine}</span>
-              </div>
-           )}
+           {type === 'checkbox' && <label className="flex items-start gap-2 group"><input type="checkbox" disabled className="mt-1 w-4 h-4 text-indigo-600 rounded border-slate-300" /><span>{renderedLine}</span></label>}
+           {type === 'checked' && <label className="flex items-start gap-2 group"><input type="checkbox" checked disabled className="mt-1 w-4 h-4 text-indigo-600 rounded border-slate-300" /><span className="line-through text-slate-400">{renderedLine}</span></label>}
+           {type === 'bullet' && <div className="flex items-start gap-2 pl-1"><span className="text-slate-400 font-bold">•</span><span>{renderedLine}</span></div>}
+           {type === 'numbered' && <div className="flex items-start gap-2"><span className="text-slate-500 font-medium w-5 shrink-0 text-right">{prefix}</span><span>{renderedLine}</span></div>}
            {type === 'text' && <div>{renderedLine}</div>}
         </div>
       );
@@ -485,6 +396,31 @@ export default function TagMindApp() {
             ))}
           </div>
         </div>
+
+        {/* --- 新增：底部使用者狀態與登入區塊 --- */}
+        <div className="p-4 border-t border-slate-200 bg-slate-50">
+          {user && !user.isAnonymous ? (
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-2 text-sm text-slate-700 font-medium truncate">
+                <User className="w-4 h-4 text-indigo-600 shrink-0" />
+                <span className="truncate" title={user.displayName || user.email}>{user.displayName || user.email || '已登入'}</span>
+              </div>
+              <button onClick={() => signOut(auth)} className="text-xs text-slate-500 hover:text-red-600 flex items-center gap-1 transition-colors w-fit">
+                <LogOut className="w-3 h-3" /> 登出
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              <div className="text-xs text-slate-500 flex items-center gap-1 font-medium">
+                <span className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse"></span>
+                訪客模式 (未跨裝置同步)
+              </div>
+              <button onClick={handleGoogleLogin} className="w-full bg-white border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50 text-indigo-600 text-xs py-2 px-3 rounded-md flex items-center justify-center gap-1.5 transition-all shadow-sm font-medium">
+                <LogIn className="w-3 h-3" /> 登入 Google 以同步
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* 主內容區 */}
@@ -507,12 +443,7 @@ export default function TagMindApp() {
                   <div key={card.id} onClick={() => openCardModal(card)} className="group bg-white rounded-xl p-5 border border-slate-200 shadow-sm hover:shadow-lg cursor-pointer flex flex-col h-64">
                     <h3 className="font-bold text-lg text-slate-800 mb-2 line-clamp-1 group-hover:text-indigo-600">{card.title}</h3>
                     <p className="text-slate-600 text-sm mb-4 line-clamp-4 flex-1 whitespace-pre-wrap">
-                      {/* 清理列表符號供卡片預覽用 */}
-                      {card.content
-                          .replace(/\[\[(.*?)\]\]/g, '$1')
-                          .replace(/^[-*]\s+\[\s\]\s+/gm, '☐ ')
-                          .replace(/^[-*]\s+\[[xX]\]\s+/gm, '☑ ')
-                      }
+                      {card.content.replace(/\[\[(.*?)\]\]/g, '$1').replace(/^[-*]\s+\[\s\]\s+/gm, '☐ ').replace(/^[-*]\s+\[[xX]\]\s+/gm, '☑ ')}
                     </p>
                     <div className="flex flex-wrap gap-2 mt-auto pt-4 border-t border-slate-100">
                       {card.tags.slice(0, 3).map(tag => <span key={tag} className={`text-xs px-2 py-0.5 rounded-full border ${getTagColor(tag)}`}>#{tag}</span>)}
@@ -566,7 +497,6 @@ export default function TagMindApp() {
                         className="w-full h-full min-h-[250px] resize-none text-slate-600 placeholder:text-slate-300 border-none outline-none bg-transparent leading-relaxed" />
                     </div>
                     
-                    {/* Markdown 提示區 */}
                     <div className="text-xs text-indigo-600 bg-indigo-50 px-3 py-2 rounded mb-4 space-y-1">
                        <p>💡 <b>排版語法提示 (需切換至預覽模式觀看)</b>：</p>
                        <ul className="list-disc pl-4 text-slate-600 space-y-0.5">
@@ -581,13 +511,11 @@ export default function TagMindApp() {
                  <>
                     <h1 className="text-2xl font-bold text-slate-800 mb-6">{currentCard.title}</h1>
                     <div className="text-slate-700 leading-relaxed text-lg">
-                       {/* 這裡會渲染出排版好的 HTML */}
                        {renderFormattedContent(currentCard.content)}
                     </div>
                  </>
               )}
 
-              {/* 標籤區塊 */}
               <div className="border-t border-slate-100 pt-4 mt-8">
                 <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 block">標籤 (Tags)</label>
                 <div className="flex flex-wrap gap-2 mb-3">
@@ -601,32 +529,21 @@ export default function TagMindApp() {
                   {modalMode === 'edit' && (
                     <div className="relative flex flex-col">
                       <div className="flex items-center">
-                        <input 
-                          type="text" 
-                          placeholder="新增標籤..." 
-                          value={tagInput} 
-                          onChange={(e) => setTagInput(e.target.value)} 
-                          onKeyDown={(e) => e.key === 'Enter' && addTag()}
-                          onFocus={() => setIsTagInputFocused(true)}
-                          onBlur={() => setTimeout(() => setIsTagInputFocused(false), 150)} // 延遲隱藏，確保點擊事件能觸發
+                        <input type="text" placeholder="新增標籤..." value={tagInput} onChange={(e) => setTagInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addTag()}
+                          onFocus={() => setIsTagInputFocused(true)} onBlur={() => setTimeout(() => setIsTagInputFocused(false), 150)} 
                           className="bg-slate-100 px-3 py-1.5 rounded-full text-sm outline-none border border-transparent focus:bg-white focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100 w-36" 
                         />
                         {tagInput && <button onClick={() => addTag()} className="absolute right-2 text-indigo-600"><Plus className="w-3 h-3" /></button>}
                       </div>
                       
-                      {/* 自動完成下拉選單 */}
                       {(isTagInputFocused && suggestedTags.length > 0) && (
                         <div className="absolute top-full left-0 mt-1 w-48 bg-white border border-slate-200 rounded-lg shadow-xl z-50 overflow-hidden">
                           <div className="px-3 py-1.5 text-xs text-slate-400 bg-slate-50 border-b border-slate-100">
                             {tagInput ? '相符的標籤：' : '建議標籤：'}
                           </div>
                           {suggestedTags.map(tag => (
-                            <button 
-                              key={tag} 
-                              // 使用 onMouseDown 避免輸入框提前失去焦點
-                              onMouseDown={(e) => { e.preventDefault(); addTag(tag); }} 
-                              className="w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 flex items-center gap-2"
-                            >
+                            <button key={tag} onMouseDown={(e) => { e.preventDefault(); addTag(tag); }} 
+                              className="w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 flex items-center gap-2">
                               <Tag className="w-3 h-3" /> {tag}
                             </button>
                           ))}
