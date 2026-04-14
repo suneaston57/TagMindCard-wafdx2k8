@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Plus, Search, Network, Grid, Tag, X, Save, Trash2, Edit3, ArrowLeft, Eye, LogIn, LogOut, User } from 'lucide-react';
+import { Plus, Search, Network, Grid, Tag, X, Save, Trash2, Edit3, ArrowLeft, Eye, LogIn, LogOut, User, Menu } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, linkWithPopup, signOut } from 'firebase/auth';
 import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
@@ -163,10 +163,10 @@ const NetworkGraph = ({ cards, onNodeClick }) => {
 
   return (
     <div ref={containerRef} className="w-full h-full bg-slate-50 cursor-crosshair overflow-hidden rounded-xl border border-slate-200 shadow-inner relative">
-      <div className="absolute top-4 left-4 bg-white/80 p-3 rounded shadow text-xs text-slate-600 pointer-events-none leading-relaxed">
+      <div className="absolute top-4 left-4 bg-white/80 p-2 sm:p-3 rounded shadow text-[10px] sm:text-xs text-slate-600 pointer-events-none leading-relaxed">
          <b>圖例說明：</b><br/>
-         <span className="inline-block w-4 border-b-2 border-slate-300 mr-1 mb-1"></span> 共同標籤<br/>
-         <span className="inline-block w-4 border-b-2 border-indigo-400 border-dashed mr-1 mb-1"></span> 內容互連<br/>
+         <span className="inline-block w-3 sm:w-4 border-b-2 border-slate-300 mr-1 mb-1"></span> 共同標籤<br/>
+         <span className="inline-block w-3 sm:w-4 border-b-2 border-indigo-400 border-dashed mr-1 mb-1"></span> 內容互連<br/>
       </div>
       <canvas ref={canvasRef} onClick={handleClick} className="w-full h-full" />
     </div>
@@ -181,6 +181,8 @@ export default function TagMindApp() {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedTagFilter, setSelectedTagFilter] = useState(null);
   
+  // UI 響應式狀態
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState('view'); 
   const [currentCard, setCurrentCard] = useState({ id: null, title: '', content: '', tags: [] });
@@ -196,28 +198,23 @@ export default function TagMindApp() {
       if (currentUser) {
         setUser(currentUser);
       } else {
-        // 若沒有任何登入狀態，預設給予匿名登入方便體驗
         signInAnonymously(auth).catch(err => console.error("匿名登入失敗:", err));
       }
     });
     return () => unsubscribe();
   }, []);
 
-  // 處理 Google 登入或綁定帳號
   const handleGoogleLogin = async () => {
     const provider = new GoogleAuthProvider();
     try {
       if (user && user.isAnonymous) {
-        // 將當前的匿名帳號「綁定」到 Google，這樣舊資料才不會消失
         await linkWithPopup(user, provider);
         alert("綁定成功！您的資料已安全同步至 Google 帳號。");
       } else {
-        // 一般登入
         await signInWithPopup(auth, provider);
       }
     } catch (error) {
       console.error("登入錯誤:", error);
-      // 有時候綁定失敗是因為該 Google 帳號已經被註冊過
       if (error.code === 'auth/credential-already-in-use') {
          await signInWithPopup(auth, provider);
       } else {
@@ -367,38 +364,63 @@ export default function TagMindApp() {
   };
 
   return (
-    <div className="flex h-screen w-full bg-slate-100 text-slate-800 font-sans overflow-hidden">
+    <div className="flex h-[100dvh] w-full bg-slate-100 text-slate-800 font-sans overflow-hidden">
       
-      {/* 側邊欄 */}
-      <div className="w-64 bg-white border-r border-slate-200 flex flex-col shadow-lg z-10 hidden md:flex">
-        <div className="p-4 border-b border-slate-100">
+      {/* --- 手機版側邊欄遮罩 --- */}
+      {isMobileSidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-slate-900/50 z-40 md:hidden transition-opacity" 
+          onClick={() => setIsMobileSidebarOpen(false)} 
+        />
+      )}
+
+      {/* --- 響應式側邊欄 --- */}
+      <div className={`
+        fixed inset-y-0 left-0 z-50 transform ${isMobileSidebarOpen ? 'translate-x-0' : '-translate-x-full'} 
+        md:relative md:translate-x-0 md:flex w-72 md:w-64 bg-white border-r border-slate-200 flex flex-col shadow-2xl md:shadow-lg transition-transform duration-300 ease-in-out
+      `}>
+        <div className="p-4 border-b border-slate-100 flex justify-between items-center">
           <h1 className="text-xl font-bold flex items-center gap-2 text-indigo-600">
             <Network className="w-6 h-6" /> TagMind
           </h1>
+          {/* 手機版關閉側邊欄按鈕 */}
+          <button className="md:hidden p-2 text-slate-400 hover:text-slate-600" onClick={() => setIsMobileSidebarOpen(false)}>
+            <X className="w-5 h-5" />
+          </button>
         </div>
-        <div className="p-4">
+        
+        {/* 電腦版「新增卡片」按鈕 */}
+        <div className="p-4 hidden md:block">
           <button onClick={() => openCardModal()} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-2 px-4 rounded-lg flex items-center justify-center gap-2 shadow-md">
             <Plus className="w-4 h-4" /> 新增卡片
           </button>
         </div>
+
         <div className="px-4 py-2 overflow-y-auto flex-1">
-          <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">熱門標籤</div>
+          <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 mt-2 md:mt-0">熱門標籤</div>
           <div className="space-y-1">
-            <button onClick={() => setSelectedTagFilter(null)} className={`w-full text-left px-3 py-2 rounded-md text-sm flex items-center justify-between ${!selectedTagFilter ? 'bg-indigo-50 text-indigo-700 font-medium' : 'hover:bg-slate-50'}`}>
+            <button 
+              onClick={() => { setSelectedTagFilter(null); setIsMobileSidebarOpen(false); }} 
+              className={`w-full text-left px-3 py-3 md:py-2 rounded-md text-sm flex items-center justify-between ${!selectedTagFilter ? 'bg-indigo-50 text-indigo-700 font-medium' : 'hover:bg-slate-50'}`}
+            >
               <span>全部顯示</span>
               <span className="bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded-full text-xs">{cards.length}</span>
             </button>
             {allTags.map(([tag, count]) => (
-              <button key={tag} onClick={() => setSelectedTagFilter(tag === selectedTagFilter ? null : tag)} className={`w-full text-left px-3 py-2 rounded-md text-sm flex items-center justify-between ${selectedTagFilter === tag ? 'bg-indigo-50 text-indigo-700 font-medium' : 'hover:bg-slate-50'}`}>
-                <div className="flex items-center gap-2"><Tag className="w-3 h-3" /><span>{tag}</span></div>
+              <button 
+                key={tag} 
+                onClick={() => { setSelectedTagFilter(tag === selectedTagFilter ? null : tag); setIsMobileSidebarOpen(false); }} 
+                className={`w-full text-left px-3 py-3 md:py-2 rounded-md text-sm flex items-center justify-between ${selectedTagFilter === tag ? 'bg-indigo-50 text-indigo-700 font-medium' : 'hover:bg-slate-50'}`}
+              >
+                <div className="flex items-center gap-2 truncate"><Tag className="w-3 h-3 shrink-0" /><span className="truncate">{tag}</span></div>
                 <span className="bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-full text-xs">{count}</span>
               </button>
             ))}
           </div>
         </div>
 
-        {/* --- 新增：底部使用者狀態與登入區塊 --- */}
-        <div className="p-4 border-t border-slate-200 bg-slate-50">
+        {/* 底部使用者狀態與登入區塊 */}
+        <div className="p-4 border-t border-slate-200 bg-slate-50 pb-8 md:pb-4">
           {user && !user.isAnonymous ? (
             <div className="flex flex-col gap-2">
               <div className="flex items-center gap-2 text-sm text-slate-700 font-medium truncate">
@@ -413,7 +435,7 @@ export default function TagMindApp() {
             <div className="flex flex-col gap-2">
               <div className="text-xs text-slate-500 flex items-center gap-1 font-medium">
                 <span className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse"></span>
-                訪客模式 (未跨裝置同步)
+                訪客模式 (未同步)
               </div>
               <button onClick={handleGoogleLogin} className="w-full bg-white border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50 text-indigo-600 text-xs py-2 px-3 rounded-md flex items-center justify-center gap-1.5 transition-all shadow-sm font-medium">
                 <LogIn className="w-3 h-3" /> 登入 Google 以同步
@@ -423,106 +445,142 @@ export default function TagMindApp() {
         </div>
       </div>
 
-      {/* 主內容區 */}
-      <div className="flex-1 flex flex-col relative h-full">
-        <div className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-6 shadow-sm z-10">
-          <div className="flex items-center gap-4 bg-slate-100 px-3 py-1.5 rounded-full w-full max-w-md border border-slate-200">
-            <Search className="w-4 h-4 text-slate-400" />
+      {/* --- 主內容區 --- */}
+      <div className="flex-1 flex flex-col relative h-[100dvh] overflow-hidden">
+        {/* 頂部導航列 */}
+        <div className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-3 sm:px-6 shadow-sm z-10 gap-2">
+          
+          {/* 手機版開啟側邊欄漢堡按鈕 */}
+          <button 
+            className="md:hidden p-2 text-slate-500 hover:text-indigo-600 hover:bg-slate-100 rounded-lg shrink-0" 
+            onClick={() => setIsMobileSidebarOpen(true)}
+          >
+            <Menu className="w-6 h-6" />
+          </button>
+
+          {/* 搜尋列 */}
+          <div className="flex items-center gap-2 sm:gap-4 bg-slate-100 px-3 py-1.5 sm:py-2 rounded-full flex-1 max-w-md border border-slate-200 focus-within:ring-2 focus-within:ring-indigo-200 transition-all">
+            <Search className="w-4 h-4 text-slate-400 shrink-0" />
             <input type="text" placeholder="搜尋卡片..." className="bg-transparent border-none outline-none text-sm w-full" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+            {searchTerm && (
+               <button onClick={() => setSearchTerm('')} className="text-slate-400 hover:text-slate-600">
+                  <X className="w-4 h-4" />
+               </button>
+            )}
           </div>
-          <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-lg border border-slate-200">
-            <button onClick={() => setViewMode('grid')} className={`p-2 rounded-md ${viewMode === 'grid' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500'}`}><Grid className="w-4 h-4" /></button>
-            <button onClick={() => setViewMode('network')} className={`p-2 rounded-md ${viewMode === 'network' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500'}`}><Network className="w-4 h-4" /></button>
+          
+          {/* 視圖切換 */}
+          <div className="flex items-center gap-1 sm:gap-2 bg-slate-100 p-1 rounded-lg border border-slate-200 shrink-0">
+            <button onClick={() => setViewMode('grid')} className={`p-1.5 sm:p-2 rounded-md transition-all ${viewMode === 'grid' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500'}`}><Grid className="w-4 h-4 sm:w-5 sm:h-5" /></button>
+            <button onClick={() => setViewMode('network')} className={`p-1.5 sm:p-2 rounded-md transition-all ${viewMode === 'network' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500'}`}><Network className="w-4 h-4 sm:w-5 sm:h-5" /></button>
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-6 bg-slate-50 relative">
+        {/* 內容顯示區 */}
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6 bg-slate-50 relative">
           {viewMode === 'grid' ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 pb-20">
-              {filteredCards.map(card => (
-                  <div key={card.id} onClick={() => openCardModal(card)} className="group bg-white rounded-xl p-5 border border-slate-200 shadow-sm hover:shadow-lg cursor-pointer flex flex-col h-64">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6 pb-24">
+              {filteredCards.length === 0 ? (
+                 <div className="col-span-full flex flex-col items-center justify-center py-20 text-slate-400">
+                    <p>沒有找到符合的卡片</p>
+                 </div>
+              ) : (
+                filteredCards.map(card => (
+                  <div key={card.id} onClick={() => openCardModal(card)} className="group bg-white rounded-xl p-4 sm:p-5 border border-slate-200 shadow-sm hover:shadow-lg cursor-pointer flex flex-col h-56 sm:h-64 transition-all active:scale-[0.98]">
                     <h3 className="font-bold text-lg text-slate-800 mb-2 line-clamp-1 group-hover:text-indigo-600">{card.title}</h3>
-                    <p className="text-slate-600 text-sm mb-4 line-clamp-4 flex-1 whitespace-pre-wrap">
+                    <p className="text-slate-600 text-sm mb-4 line-clamp-4 sm:line-clamp-5 flex-1 whitespace-pre-wrap">
                       {card.content.replace(/\[\[(.*?)\]\]/g, '$1').replace(/^[-*]\s+\[\s\]\s+/gm, '☐ ').replace(/^[-*]\s+\[[xX]\]\s+/gm, '☑ ')}
                     </p>
                     <div className="flex flex-wrap gap-2 mt-auto pt-4 border-t border-slate-100">
                       {card.tags.slice(0, 3).map(tag => <span key={tag} className={`text-xs px-2 py-0.5 rounded-full border ${getTagColor(tag)}`}>#{tag}</span>)}
+                      {card.tags.length > 3 && <span className="text-xs text-slate-400 px-1">+{card.tags.length - 3}</span>}
                     </div>
                   </div>
-              ))}
+                ))
+              )}
             </div>
           ) : (
-            <NetworkGraph cards={filteredCards} onNodeClick={openCardModal} />
+            <div className="h-[calc(100%-1rem)] w-full pb-20">
+              <NetworkGraph cards={filteredCards} onNodeClick={openCardModal} />
+            </div>
           )}
         </div>
       </div>
 
-      {/* 編輯器/閱讀器 Modal */}
+      {/* --- 手機專屬「懸浮新增按鈕 (FAB)」 --- */}
+      <button 
+        onClick={() => openCardModal()} 
+        className="md:hidden fixed bottom-6 right-6 bg-indigo-600 hover:bg-indigo-700 text-white p-4 rounded-full shadow-2xl z-30 transition-transform active:scale-95"
+      >
+        <Plus className="w-6 h-6" />
+      </button>
+
+      {/* --- 編輯器/閱讀器 Modal --- */}
       {isModalOpen && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl flex flex-col max-h-[90vh] overflow-hidden">
+        <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center bg-slate-900/60 sm:backdrop-blur-sm sm:p-4">
+          <div className="bg-white w-full sm:max-w-2xl flex flex-col h-[95dvh] sm:h-auto sm:max-h-[90vh] rounded-t-2xl sm:rounded-2xl shadow-2xl overflow-hidden animate-in slide-in-from-bottom-10 sm:slide-in-from-bottom-0 sm:zoom-in-95 duration-200">
             
-            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-              <div className="flex items-center gap-3">
+            <div className="px-4 sm:px-6 py-3 sm:py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+              <div className="flex items-center gap-2 sm:gap-3">
                 {historyStack.length > 0 && (
-                   <button onClick={handleBack} className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg text-sm font-medium flex items-center"><ArrowLeft className="w-4 h-4 mr-1" /> 返回</button>
+                   <button onClick={handleBack} className="p-1 sm:p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg text-sm font-medium flex items-center"><ArrowLeft className="w-4 h-4 sm:mr-1" /> <span className="hidden sm:inline">返回</span></button>
                 )}
-                <h2 className="text-lg font-bold text-slate-800">{modalMode === 'view' ? '閱讀卡片 (已排版)' : (currentCard.id ? '編輯卡片' : '新卡片')}</h2>
+                <h2 className="text-base sm:text-lg font-bold text-slate-800 line-clamp-1">{modalMode === 'view' ? '閱讀卡片' : (currentCard.id ? '編輯卡片' : '新卡片')}</h2>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1 sm:gap-2">
                 {modalMode === 'view' ? (
-                  <button onClick={() => setModalMode('edit')} className="p-2 text-indigo-600 bg-indigo-50 rounded-lg text-sm font-medium flex items-center"><Edit3 className="w-4 h-4 mr-1" /> 編輯</button>
+                  <button onClick={() => setModalMode('edit')} className="p-1.5 sm:p-2 text-indigo-600 bg-indigo-50 rounded-lg text-sm font-medium flex items-center"><Edit3 className="w-4 h-4 sm:mr-1" /> <span className="hidden sm:inline">編輯</span></button>
                 ) : (
-                  <button onClick={() => currentCard.id && setModalMode('view')} className="p-2 text-slate-500 hover:bg-slate-100 rounded-lg text-sm flex items-center"><Eye className="w-4 h-4 mr-1" /> 預覽</button>
+                  <button onClick={() => currentCard.id && setModalMode('view')} className="p-1.5 sm:p-2 text-slate-500 hover:bg-slate-100 rounded-lg text-sm flex items-center"><Eye className="w-4 h-4 sm:mr-1" /> <span className="hidden sm:inline">預覽</span></button>
                 )}
                 {currentCard.id && (
-                  <button onClick={() => handleDeleteCard(currentCard.id)} className={`p-2 rounded-lg ${confirmDeleteId === currentCard.id ? 'bg-red-500 text-white' : 'text-slate-400 hover:text-red-500'}`}>
+                  <button onClick={() => handleDeleteCard(currentCard.id)} className={`p-1.5 sm:p-2 rounded-lg ${confirmDeleteId === currentCard.id ? 'bg-red-500 text-white' : 'text-slate-400 hover:text-red-500'}`}>
                     {confirmDeleteId === currentCard.id ? <span className="text-xs px-1 font-bold">確認刪除</span> : <Trash2 className="w-4 h-4" />}
                   </button>
                 )}
-                <div className="w-px h-6 bg-slate-200 mx-1"></div>
-                <button onClick={closeModal} className="p-2 text-slate-400 hover:bg-slate-200 rounded-lg"><X className="w-5 h-5" /></button>
+                <div className="w-px h-5 sm:h-6 bg-slate-200 mx-0.5 sm:mx-1"></div>
+                <button onClick={closeModal} className="p-1.5 sm:p-2 text-slate-400 hover:bg-slate-200 rounded-lg"><X className="w-5 h-5 sm:w-6 sm:h-6" /></button>
               </div>
             </div>
 
-            <div className="p-6 overflow-y-auto flex-1">
+            <div className="p-4 sm:p-6 overflow-y-auto flex-1 relative">
               {modalMode === 'edit' ? (
                  <>
                     <input type="text" placeholder="卡片標題" value={currentCard.title} onChange={(e) => setCurrentCard({ ...currentCard, title: e.target.value })}
-                      className={`w-full text-2xl font-bold text-slate-800 placeholder:text-slate-300 border-b-2 outline-none bg-transparent mb-2 pb-1 ${isDuplicateTitle ? 'border-red-400' : 'border-transparent focus:border-indigo-300'}`} autoFocus={!currentCard.id} />
-                    {isDuplicateTitle && <p className="text-sm text-red-500 mb-4">⚠️ 此標題已存在，為避免連結混亂請修改。</p>}
+                      className={`w-full text-xl sm:text-2xl font-bold text-slate-800 placeholder:text-slate-300 border-b-2 outline-none bg-transparent mb-2 pb-1 ${isDuplicateTitle ? 'border-red-400' : 'border-transparent focus:border-indigo-300'}`} autoFocus={!currentCard.id} />
+                    {isDuplicateTitle && <p className="text-sm text-red-500 mb-4">⚠️ 此標題已存在，請修改。</p>}
 
-                    <div className="mb-2 min-h-[150px]">
-                      <textarea placeholder="寫下你的想法..." value={currentCard.content} onChange={(e) => setCurrentCard({ ...currentCard, content: e.target.value })}
-                        className="w-full h-full min-h-[250px] resize-none text-slate-600 placeholder:text-slate-300 border-none outline-none bg-transparent leading-relaxed" />
+                    <div className="mb-2 min-h-[200px] sm:min-h-[150px] flex-1">
+                      <textarea placeholder="寫下你的靈感..." value={currentCard.content} onChange={(e) => setCurrentCard({ ...currentCard, content: e.target.value })}
+                        className="w-full h-full min-h-[30vh] sm:min-h-[250px] resize-none text-base sm:text-lg text-slate-600 placeholder:text-slate-300 border-none outline-none bg-transparent leading-relaxed" />
                     </div>
                     
                     <div className="text-xs text-indigo-600 bg-indigo-50 px-3 py-2 rounded mb-4 space-y-1">
-                       <p>💡 <b>排版語法提示 (需切換至預覽模式觀看)</b>：</p>
+                       <p>💡 <b>排版語法提示 (切換預覽觀看)</b>：</p>
                        <ul className="list-disc pl-4 text-slate-600 space-y-0.5">
-                         <li>輸入 <code>[[標題]]</code> 可建立卡片連結</li>
-                         <li>輸入 <code>- [ ] </code> 建立待辦事項 (符號後需空格)</li>
-                         <li>輸入 <code>- </code> 建立項目符號 (符號後需空格)</li>
-                         <li>輸入 <code>1. </code> 建立數字列表 (數字後需點與空格)</li>
+                         <li>輸入 <code>[[標題]]</code> 建立連結</li>
+                         <li>輸入 <code>- [ ] </code> 建立待辦</li>
+                         <li>輸入 <code>- </code> 建立項目</li>
                        </ul>
                     </div>
                  </>
               ) : (
                  <>
-                    <h1 className="text-2xl font-bold text-slate-800 mb-6">{currentCard.title}</h1>
-                    <div className="text-slate-700 leading-relaxed text-lg">
+                    <h1 className="text-xl sm:text-2xl font-bold text-slate-800 mb-4 sm:mb-6">{currentCard.title}</h1>
+                    <div className="text-slate-700 leading-relaxed text-base sm:text-lg">
                        {renderFormattedContent(currentCard.content)}
                     </div>
                  </>
               )}
 
-              <div className="border-t border-slate-100 pt-4 mt-8">
-                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 block">標籤 (Tags)</label>
+              {/* 標籤區塊 */}
+              <div className="border-t border-slate-100 pt-4 mt-6 sm:mt-8 pb-4">
+                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 block">標籤</label>
                 <div className="flex flex-wrap gap-2 mb-3">
                   {currentCard.tags.map(tag => (
-                    <span key={tag} className={`px-3 py-1 rounded-full text-sm flex items-center gap-1 shadow-sm ${getTagColor(tag)}`}>
+                    <span key={tag} className={`px-2.5 sm:px-3 py-1 rounded-full text-xs sm:text-sm flex items-center gap-1 shadow-sm ${getTagColor(tag)}`}>
                       <Tag className="w-3 h-3" />{tag}
-                      {modalMode === 'edit' && <button onClick={() => removeTag(tag)} className="ml-1 hover:text-black/50"><X className="w-3 h-3" /></button>}
+                      {modalMode === 'edit' && <button onClick={() => removeTag(tag)} className="ml-1 hover:text-black/50 p-0.5"><X className="w-3 h-3" /></button>}
                     </span>
                   ))}
                   
@@ -530,14 +588,14 @@ export default function TagMindApp() {
                     <div className="relative flex flex-col">
                       <div className="flex items-center">
                         <input type="text" placeholder="新增標籤..." value={tagInput} onChange={(e) => setTagInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addTag()}
-                          onFocus={() => setIsTagInputFocused(true)} onBlur={() => setTimeout(() => setIsTagInputFocused(false), 150)} 
-                          className="bg-slate-100 px-3 py-1.5 rounded-full text-sm outline-none border border-transparent focus:bg-white focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100 w-36" 
+                          onFocus={() => setIsTagInputFocused(true)} onBlur={() => setTimeout(() => setIsTagInputFocused(false), 200)} 
+                          className="bg-slate-100 px-3 py-1.5 rounded-full text-xs sm:text-sm outline-none border border-transparent focus:bg-white focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100 w-32 sm:w-36" 
                         />
                         {tagInput && <button onClick={() => addTag()} className="absolute right-2 text-indigo-600"><Plus className="w-3 h-3" /></button>}
                       </div>
                       
                       {(isTagInputFocused && suggestedTags.length > 0) && (
-                        <div className="absolute top-full left-0 mt-1 w-48 bg-white border border-slate-200 rounded-lg shadow-xl z-50 overflow-hidden">
+                        <div className="absolute bottom-full mb-1 sm:bottom-auto sm:top-full sm:mt-1 left-0 w-48 bg-white border border-slate-200 rounded-lg shadow-xl z-50 overflow-hidden">
                           <div className="px-3 py-1.5 text-xs text-slate-400 bg-slate-50 border-b border-slate-100">
                             {tagInput ? '相符的標籤：' : '建議標籤：'}
                           </div>
@@ -556,10 +614,10 @@ export default function TagMindApp() {
             </div>
 
             {modalMode === 'edit' && (
-               <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end">
+               <div className="p-3 sm:p-4 border-t border-slate-100 bg-slate-50 flex justify-end pb-8 sm:pb-4">
                   <button onClick={handleSaveCard} disabled={isDuplicateTitle || !currentCard.title.trim()}
-                   className={`px-6 py-2 rounded-lg font-medium flex items-center gap-2 shadow-md ${isDuplicateTitle || !currentCard.title.trim() ? 'bg-slate-300 text-slate-500 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700 text-white'}`}>
-                   <Save className="w-4 h-4" />儲存卡片
+                   className={`w-full sm:w-auto px-6 py-3 sm:py-2 rounded-xl sm:rounded-lg font-bold sm:font-medium flex items-center justify-center gap-2 shadow-md ${isDuplicateTitle || !currentCard.title.trim() ? 'bg-slate-300 text-slate-500 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700 text-white'}`}>
+                   <Save className="w-5 h-5 sm:w-4 sm:h-4" /> 儲存卡片
                  </button>
                </div>
             )}
