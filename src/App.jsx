@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Plus, Search, Network, Grid, Tag, X, Save, Trash2, Edit3, ArrowLeft, Eye, LogIn, LogOut, User, Menu } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, linkWithPopup, signOut } from 'firebase/auth';
+// 匯入 signInWithRedirect 和 getRedirectResult
+import { getAuth, signInAnonymously, onAuthStateChanged, GoogleAuthProvider, signInWithRedirect, getRedirectResult, linkWithRedirect, signOut } from 'firebase/auth';
 import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 
 // --- 將此處替換為您的 Firebase 設定 ---
@@ -191,9 +192,37 @@ export default function TagMindApp() {
   const [tagInput, setTagInput] = useState('');
   const [isTagInputFocused, setIsTagInputFocused] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+  
+  // 處理重新導向登入結果的狀態
+  const [isLoggingIn, setIsLoggingIn] = useState(true);
 
   // --- Auth 登入與狀態監聽 ---
   useEffect(() => {
+    // 檢查是否有重新導向登入的結果
+    const checkRedirectResult = async () => {
+      try {
+        const result = await getRedirectResult(auth);
+        if (result) {
+          // 重新導向登入成功
+          console.log("Redirect login successful");
+        }
+      } catch (error) {
+        console.error("Redirect login error:", error);
+        // 如果是綁定帳號發生衝突
+        if (error.code === 'auth/credential-already-in-use') {
+          alert("此 Google 帳號已被使用，系統將直接為您登入。");
+          const provider = new GoogleAuthProvider();
+          signInWithRedirect(auth, provider);
+        } else {
+           alert("登入發生錯誤：" + error.message);
+        }
+      } finally {
+        setIsLoggingIn(false);
+      }
+    };
+
+    checkRedirectResult();
+
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       if (currentUser) {
         setUser(currentUser);
@@ -204,22 +233,21 @@ export default function TagMindApp() {
     return () => unsubscribe();
   }, []);
 
+  // 修改 Google 登入邏輯為 Redirect
   const handleGoogleLogin = async () => {
+    setIsLoggingIn(true);
     const provider = new GoogleAuthProvider();
     try {
       if (user && user.isAnonymous) {
-        await linkWithPopup(user, provider);
-        alert("綁定成功！您的資料已安全同步至 Google 帳號。");
+        // 將當前的匿名帳號「綁定」到 Google，使用 Redirect
+        await linkWithRedirect(user, provider);
       } else {
-        await signInWithPopup(auth, provider);
+        // 一般登入，使用 Redirect
+        await signInWithRedirect(auth, provider);
       }
     } catch (error) {
-      console.error("登入錯誤:", error);
-      if (error.code === 'auth/credential-already-in-use') {
-         await signInWithPopup(auth, provider);
-      } else {
-         alert("登入失敗，請確認已在 Firebase 啟用 Google 登入並設定白名單。");
-      }
+      console.error("啟動登入錯誤:", error);
+      setIsLoggingIn(false);
     }
   };
 
@@ -421,7 +449,11 @@ export default function TagMindApp() {
 
         {/* 底部使用者狀態與登入區塊 */}
         <div className="p-4 border-t border-slate-200 bg-slate-50 pb-8 md:pb-4">
-          {user && !user.isAnonymous ? (
+          {isLoggingIn ? (
+            <div className="text-sm text-slate-500 flex justify-center items-center py-2">
+              <span className="animate-pulse">登入中...</span>
+            </div>
+          ) : user && !user.isAnonymous ? (
             <div className="flex flex-col gap-2">
               <div className="flex items-center gap-2 text-sm text-slate-700 font-medium truncate">
                 <User className="w-4 h-4 text-indigo-600 shrink-0" />
