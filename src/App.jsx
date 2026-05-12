@@ -2,12 +2,13 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Plus, Search, Network, Grid, Tag, X, Save, Trash2, Edit3, ArrowLeft, Eye, LogIn, LogOut, User, Menu, Mail, Lock } from 'lucide-react';
 // 加入 getApps, getApp 以防止 Firebase 重複初始化崩潰
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, linkWithPopup, signOut, signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
+// ⚠️ 新增引入 sendPasswordResetEmail
+import { getAuth, signInAnonymously, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, linkWithPopup, signOut, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth';
 import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 
 // --- ⚠️ 請替換為您的 Firebase 設定 ---
 const firebaseConfig = {
-  apiKey: "AIzaSyCg0O0I5y_jZIsa43Ad91rkRM3ybJ6hbtE", // 請確保這裡是您的金鑰
+  apiKey: "AIzaSyCg0O0I5y_jZIsa43Ad91rkRM3ybJ6hbtE", 
   authDomain: "tagmindcard.firebaseapp.com",
   projectId: "tagmindcard",
   storageBucket: "tagmindcard.firebasestorage.app",
@@ -16,7 +17,7 @@ const firebaseConfig = {
   measurementId: "G-M2NE63D19Z"
 };
 
-// 安全的 Firebase 初始化 (防止熱更新時重複載入導致白屏)
+// 安全的 Firebase 初始化
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 const auth = getAuth(app);
 const db = getFirestore(app);
@@ -43,7 +44,7 @@ const NetworkGraph = ({ cards, onNodeClick }) => {
   const { nodes, links } = useMemo(() => {
     const nodes = cards.map(card => ({
       ...card, 
-      tags: card.tags || [], // 安全保護
+      tags: card.tags || [], 
       x: Math.random() * 800, y: Math.random() * 600, vx: 0, vy: 0, 
       radius: 30 + ((card.tags || []).length * 2) 
     }));
@@ -57,7 +58,7 @@ const NetworkGraph = ({ cards, onNodeClick }) => {
     }
 
     nodes.forEach((node, i) => {
-       const content = node.content || ''; // 安全保護
+       const content = node.content || ''; 
        const linkMatches = [...content.matchAll(/\[\[(.*?)\]\]/g)].map(m => m[1]);
        linkMatches.forEach(targetTitle => {
            const targetIndex = nodes.findIndex(n => n.title === targetTitle);
@@ -88,7 +89,7 @@ const NetworkGraph = ({ cards, onNodeClick }) => {
 
     const animate = () => {
       const width = canvas.width, height = canvas.height;
-      if (!width || !height) return; // 避免容器為 0 時執行物理運算
+      if (!width || !height) return; 
       const repulsion = 1000, springLength = 150, k = 0.05, damping = 0.9, centerForce = 0.005; 
 
       nodes.forEach(node => {
@@ -268,11 +269,32 @@ export default function TagMindApp() {
       setAuthPassword('');
     } catch (error) {
       console.error("信箱驗證錯誤:", error);
-      if (error.code === 'auth/user-not-found') setAuthError("找不到此帳號，請切換至註冊模式。");
+      if (error.code === 'auth/invalid-credential') setAuthError("信箱或密碼錯誤，請重新確認或切換至註冊模式。");
+      else if (error.code === 'auth/user-not-found') setAuthError("找不到此帳號，請切換至註冊模式。");
       else if (error.code === 'auth/wrong-password') setAuthError("密碼錯誤，請重試。");
-      else if (error.code === 'auth/email-already-in-use') setAuthError("此信箱已註冊，請切換至登入模式。");
+      else if (error.code === 'auth/email-already-in-use') setAuthError("此信箱已被 Google 或其他方式註冊，請切換至登入模式。若沒有密碼請點擊下方「忘記密碼」。");
       else if (error.code === 'auth/weak-password') setAuthError("密碼太弱，至少需要 6 個字元。");
       else setAuthError("驗證失敗，請檢查信箱格式或網路。");
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
+
+  // --- 新增：發送重設密碼信件功能 ---
+  const handleResetPassword = async () => {
+    if (!authEmail.trim()) {
+      setAuthError("請先在上方輸入您的電子信箱");
+      return;
+    }
+    setIsLoggingIn(true);
+    try {
+      await sendPasswordResetEmail(auth, authEmail);
+      alert("設定/重設密碼信件已發送！\n請前往信箱收信設定密碼後，即可回到此處用該密碼登入。");
+      setAuthError('');
+    } catch (error) {
+      console.error("重設密碼錯誤:", error);
+      if (error.code === 'auth/user-not-found') setAuthError("找不到此信箱，請確認是否輸入正確。");
+      else setAuthError("發送重設信失敗，請稍後再試。");
     } finally {
       setIsLoggingIn(false);
     }
@@ -282,7 +304,6 @@ export default function TagMindApp() {
     if (!user) return;
     const cardsRef = collection(db, 'artifacts', appId, 'users', user.uid, 'cards');
     const unsubscribe = onSnapshot(cardsRef, (snapshot) => {
-      // 安全抓取：確保即使舊資料缺乏欄位也不會出錯
       const loadedCards = snapshot.docs.map(doc => ({ 
           id: doc.id, 
           title: doc.data().title || '',
@@ -607,9 +628,18 @@ export default function TagMindApp() {
               
               <div className="flex flex-col gap-1.5">
                 <label className="text-xs font-semibold text-slate-500 flex items-center gap-1"><Lock className="w-3 h-3"/> 密碼</label>
-                <input type="password" required value={authPassword} onChange={e => setAuthPassword(e.target.value)} 
+                <input type="password" required={isLoginMode} value={authPassword} onChange={e => setAuthPassword(e.target.value)} 
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:border-indigo-500 text-sm" placeholder="至少 6 個字元" />
               </div>
+
+              {/* 加入忘記密碼 / 設定密碼功能 */}
+              {isLoginMode && (
+                <div className="flex justify-end mt-[-8px]">
+                  <button type="button" onClick={handleResetPassword} className="text-[11px] text-indigo-600 hover:underline">
+                    忘記密碼 / 設定 Google 帳號密碼？
+                  </button>
+                </div>
+              )}
 
               <button type="submit" disabled={isLoggingIn} className="w-full mt-2 bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2.5 rounded-lg shadow-md transition-all active:scale-95 disabled:opacity-50">
                 {isLoggingIn ? '處理中...' : (isLoginMode ? '登入' : '註冊')}
