@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Plus, Search, Network, Grid, Tag, X, Save, Trash2, Edit3, ArrowLeft, Eye, LogIn, LogOut, User, Menu } from 'lucide-react';
-import { initializeApp } from 'firebase/app';
-// 匯入 signInWithRedirect 和 getRedirectResult
-import { getAuth, signInAnonymously, onAuthStateChanged, GoogleAuthProvider, signInWithRedirect, getRedirectResult, linkWithRedirect, signOut } from 'firebase/auth';
+import { Plus, Search, Network, Grid, Tag, X, Save, Trash2, Edit3, ArrowLeft, Eye, LogIn, LogOut, User, Menu, Mail, Lock } from 'lucide-react';
+// 加入 getApps, getApp 以防止 Firebase 重複初始化崩潰
+import { initializeApp, getApps, getApp } from 'firebase/app';
+import { getAuth, signInAnonymously, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, linkWithPopup, signOut, signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
 import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 
-// --- 將此處替換為您的 Firebase 設定 ---
+// --- ⚠️ 請替換為您的 Firebase 設定 ---
 const firebaseConfig = {
-  apiKey: "AIzaSyCg0O0I5y_jZIsa43Ad91rkRM3ybJ6hbtE",
+  apiKey: "AIzaSyCg0O0I5y_jZIsa43Ad91rkRM3ybJ6hbtE", // 請確保這裡是您的金鑰
   authDomain: "tagmindcard.firebaseapp.com",
   projectId: "tagmindcard",
   storageBucket: "tagmindcard.firebasestorage.app",
@@ -15,7 +15,9 @@ const firebaseConfig = {
   appId: "1:706276976392:web:78cce0dc5692a422356ebd",
   measurementId: "G-M2NE63D19Z"
 };
-const app = initializeApp(firebaseConfig);
+
+// 安全的 Firebase 初始化 (防止熱更新時重複載入導致白屏)
+const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = 'tagmind-app'; 
@@ -40,7 +42,10 @@ const NetworkGraph = ({ cards, onNodeClick }) => {
   
   const { nodes, links } = useMemo(() => {
     const nodes = cards.map(card => ({
-      ...card, x: Math.random() * 800, y: Math.random() * 600, vx: 0, vy: 0, radius: 30 + (card.tags.length * 2) 
+      ...card, 
+      tags: card.tags || [], // 安全保護
+      x: Math.random() * 800, y: Math.random() * 600, vx: 0, vy: 0, 
+      radius: 30 + ((card.tags || []).length * 2) 
     }));
     const uniqueLinks = new Map();
 
@@ -52,7 +57,8 @@ const NetworkGraph = ({ cards, onNodeClick }) => {
     }
 
     nodes.forEach((node, i) => {
-       const linkMatches = [...(node.content || '').matchAll(/\[\[(.*?)\]\]/g)].map(m => m[1]);
+       const content = node.content || ''; // 安全保護
+       const linkMatches = [...content.matchAll(/\[\[(.*?)\]\]/g)].map(m => m[1]);
        linkMatches.forEach(targetTitle => {
            const targetIndex = nodes.findIndex(n => n.title === targetTitle);
            if (targetIndex !== -1 && targetIndex !== i) {
@@ -67,6 +73,7 @@ const NetworkGraph = ({ cards, onNodeClick }) => {
 
   useEffect(() => {
     const canvas = canvasRef.current;
+    if (!canvas) return;
     const ctx = canvas.getContext('2d');
     let animationFrameId;
 
@@ -81,6 +88,7 @@ const NetworkGraph = ({ cards, onNodeClick }) => {
 
     const animate = () => {
       const width = canvas.width, height = canvas.height;
+      if (!width || !height) return; // 避免容器為 0 時執行物理運算
       const repulsion = 1000, springLength = 150, k = 0.05, damping = 0.9, centerForce = 0.005; 
 
       nodes.forEach(node => {
@@ -136,7 +144,8 @@ const NetworkGraph = ({ cards, onNodeClick }) => {
         ctx.beginPath(); ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2);
         ctx.fillStyle = '#ffffff'; ctx.fill(); ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 3; ctx.stroke();
         ctx.fillStyle = '#1e293b'; ctx.font = '14px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        const label = node.title.length > 5 ? node.title.substring(0, 5) + '...' : node.title;
+        const title = node.title || '無標題';
+        const label = title.length > 5 ? title.substring(0, 5) + '...' : title;
         ctx.fillText(label, node.x, node.y);
         if (node.tags.length > 0) {
             ctx.beginPath(); ctx.arc(node.x + node.radius * 0.7, node.y - node.radius * 0.7, 8, 0, Math.PI * 2);
@@ -182,7 +191,7 @@ export default function TagMindApp() {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedTagFilter, setSelectedTagFilter] = useState(null);
   
-  // UI 響應式狀態
+  // UI 狀態
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState('view'); 
@@ -193,36 +202,15 @@ export default function TagMindApp() {
   const [isTagInputFocused, setIsTagInputFocused] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   
-  // 處理重新導向登入結果的狀態
-  const [isLoggingIn, setIsLoggingIn] = useState(true);
+  // 登入 Modal 狀態
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [isLoginMode, setIsLoginMode] = useState(true); 
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authError, setAuthError] = useState('');
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
 
-  // --- Auth 登入與狀態監聽 ---
   useEffect(() => {
-    // 檢查是否有重新導向登入的結果
-    const checkRedirectResult = async () => {
-      try {
-        const result = await getRedirectResult(auth);
-        if (result) {
-          // 重新導向登入成功
-          console.log("Redirect login successful");
-        }
-      } catch (error) {
-        console.error("Redirect login error:", error);
-        // 如果是綁定帳號發生衝突
-        if (error.code === 'auth/credential-already-in-use') {
-          alert("此 Google 帳號已被使用，系統將直接為您登入。");
-          const provider = new GoogleAuthProvider();
-          signInWithRedirect(auth, provider);
-        } else {
-           alert("登入發生錯誤：" + error.message);
-        }
-      } finally {
-        setIsLoggingIn(false);
-      }
-    };
-
-    checkRedirectResult();
-
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       if (currentUser) {
         setUser(currentUser);
@@ -233,20 +221,59 @@ export default function TagMindApp() {
     return () => unsubscribe();
   }, []);
 
-  // 修改 Google 登入邏輯為 Redirect
   const handleGoogleLogin = async () => {
+    setAuthError('');
     setIsLoggingIn(true);
     const provider = new GoogleAuthProvider();
     try {
       if (user && user.isAnonymous) {
-        // 將當前的匿名帳號「綁定」到 Google，使用 Redirect
-        await linkWithRedirect(user, provider);
+        await linkWithPopup(user, provider);
       } else {
-        // 一般登入，使用 Redirect
-        await signInWithRedirect(auth, provider);
+        await signInWithPopup(auth, provider);
       }
+      setIsAuthModalOpen(false);
     } catch (error) {
-      console.error("啟動登入錯誤:", error);
+      console.error("Google登入錯誤:", error);
+      if (error.code === 'auth/credential-already-in-use') {
+         await signInWithPopup(auth, provider);
+         setIsAuthModalOpen(false);
+      } else {
+         setAuthError("Google 登入失敗或被瀏覽器阻擋。如果您使用手機，請改用信箱登入。");
+      }
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
+
+  const handleEmailAuth = async (e) => {
+    e.preventDefault();
+    setAuthError('');
+    setIsLoggingIn(true);
+    try {
+      if (isLoginMode) {
+        await signInWithEmailAndPassword(auth, authEmail, authPassword);
+      } else {
+        if (user && user.isAnonymous) {
+            try {
+                await createUserWithEmailAndPassword(auth, authEmail, authPassword);
+            } catch (err) {
+                throw err;
+            }
+        } else {
+            await createUserWithEmailAndPassword(auth, authEmail, authPassword);
+        }
+      }
+      setIsAuthModalOpen(false);
+      setAuthEmail('');
+      setAuthPassword('');
+    } catch (error) {
+      console.error("信箱驗證錯誤:", error);
+      if (error.code === 'auth/user-not-found') setAuthError("找不到此帳號，請切換至註冊模式。");
+      else if (error.code === 'auth/wrong-password') setAuthError("密碼錯誤，請重試。");
+      else if (error.code === 'auth/email-already-in-use') setAuthError("此信箱已註冊，請切換至登入模式。");
+      else if (error.code === 'auth/weak-password') setAuthError("密碼太弱，至少需要 6 個字元。");
+      else setAuthError("驗證失敗，請檢查信箱格式或網路。");
+    } finally {
       setIsLoggingIn(false);
     }
   };
@@ -255,47 +282,66 @@ export default function TagMindApp() {
     if (!user) return;
     const cardsRef = collection(db, 'artifacts', appId, 'users', user.uid, 'cards');
     const unsubscribe = onSnapshot(cardsRef, (snapshot) => {
-      setCards(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      // 安全抓取：確保即使舊資料缺乏欄位也不會出錯
+      const loadedCards = snapshot.docs.map(doc => ({ 
+          id: doc.id, 
+          title: doc.data().title || '',
+          content: doc.data().content || '',
+          tags: doc.data().tags || [],
+          ...doc.data() 
+      }));
+      setCards(loadedCards);
     }, (error) => console.error("Firestore error:", error));
     return () => unsubscribe();
   }, [user]);
 
   const allTags = useMemo(() => {
     const counts = {};
-    cards.forEach(card => card.tags.forEach(tag => { counts[tag] = (counts[tag] || 0) + 1; }));
+    cards.forEach(card => (card.tags || []).forEach(tag => { counts[tag] = (counts[tag] || 0) + 1; }));
     return Object.entries(counts).sort((a, b) => b[1] - a[1]); 
   }, [cards]);
 
   const suggestedTags = useMemo(() => {
     const lowerInput = tagInput.trim().toLowerCase();
-    const availableTags = allTags.map(([tag]) => tag).filter(tag => !currentCard.tags.includes(tag));
+    const currentTags = currentCard.tags || [];
+    const availableTags = allTags.map(([tag]) => tag).filter(tag => !currentTags.includes(tag));
     if (!lowerInput) return availableTags.slice(0, 5);
     return availableTags.filter(tag => tag.toLowerCase().includes(lowerInput)).slice(0, 5); 
   }, [tagInput, allTags, currentCard.tags]);
 
   const filteredCards = useMemo(() => {
     return cards.filter(card => {
-      const matchesSearch = (card.title || '').toLowerCase().includes(searchTerm.toLowerCase()) || 
-                            (card.content || '').toLowerCase().includes(searchTerm.toLowerCase());
-      const matchesTag = selectedTagFilter ? card.tags.includes(selectedTagFilter) : true;
+      const cardTitle = card.title || '';
+      const cardContent = card.content || '';
+      const cardTags = card.tags || [];
+      const matchesSearch = cardTitle.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                            cardContent.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesTag = selectedTagFilter ? cardTags.includes(selectedTagFilter) : true;
       return matchesSearch && matchesTag;
     });
   }, [cards, searchTerm, selectedTagFilter]);
 
   const isDuplicateTitle = useMemo(() => {
-    if (!currentCard.title) return false;
-    return cards.some(c => c.title.trim().toLowerCase() === currentCard.title.trim().toLowerCase() && c.id !== currentCard.id);
+    const currentTitle = (currentCard.title || '').trim().toLowerCase();
+    if (!currentTitle) return false;
+    return cards.some(c => (c.title || '').trim().toLowerCase() === currentTitle && c.id !== currentCard.id);
   }, [cards, currentCard.title, currentCard.id]);
 
   const handleSaveCard = async () => {
-    if (!currentCard.title.trim() || !user || isDuplicateTitle) return;
+    const titleToSave = (currentCard.title || '').trim();
+    if (!titleToSave || !user || isDuplicateTitle) return;
+    
     const cardsRef = collection(db, 'artifacts', appId, 'users', user.uid, 'cards');
     try {
+      const dataToSave = {
+          title: titleToSave,
+          content: currentCard.content || '',
+          tags: currentCard.tags || []
+      };
+
       if (currentCard.id) {
-        const { id, ...dataToUpdate } = currentCard;
-        await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'cards', currentCard.id), dataToUpdate);
+        await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'cards', currentCard.id), dataToSave);
       } else {
-        const { id, ...dataToSave } = currentCard;
         await addDoc(cardsRef, { ...dataToSave, createdAt: Date.now() });
       }
       setModalMode('view'); 
@@ -316,18 +362,30 @@ export default function TagMindApp() {
   };
 
   const openCardModal = (card = null) => {
-    if (card) { setCurrentCard(card); setModalMode('view'); } 
-    else { setCurrentCard({ id: null, title: '', content: '', tags: [] }); setModalMode('edit'); }
+    if (card) { 
+        setCurrentCard({ ...card, tags: card.tags || [], content: card.content || '', title: card.title || '' }); 
+        setModalMode('view'); 
+    } 
+    else { 
+        setCurrentCard({ id: null, title: '', content: '', tags: [] }); 
+        setModalMode('edit'); 
+    }
     setTagInput(''); setIsModalOpen(true); setHistoryStack([]); 
   };
 
   const closeModal = () => { setIsModalOpen(false); setHistoryStack([]); };
 
   const handleLinkClick = (targetTitle) => {
-    const targetCard = cards.find(c => c.title === targetTitle);
+    const targetCard = cards.find(c => (c.title || '') === targetTitle);
     setHistoryStack(prev => [...prev, currentCard]);
-    if (targetCard) { setCurrentCard(targetCard); setModalMode('view'); } 
-    else { setCurrentCard({ id: null, title: targetTitle, content: '', tags: [] }); setModalMode('edit'); }
+    if (targetCard) { 
+        setCurrentCard({ ...targetCard, tags: targetCard.tags || [], content: targetCard.content || '', title: targetCard.title || '' }); 
+        setModalMode('view'); 
+    } 
+    else { 
+        setCurrentCard({ id: null, title: targetTitle, content: '', tags: [] }); 
+        setModalMode('edit'); 
+    }
   };
 
   const handleBack = () => {
@@ -340,14 +398,16 @@ export default function TagMindApp() {
 
   const addTag = (tagToAdd = tagInput) => {
     const newTag = tagToAdd.trim();
-    if (newTag && !currentCard.tags.includes(newTag)) {
-      setCurrentCard({ ...currentCard, tags: [...currentCard.tags, newTag] });
+    const currentTags = currentCard.tags || [];
+    if (newTag && !currentTags.includes(newTag)) {
+      setCurrentCard({ ...currentCard, tags: [...currentTags, newTag] });
       setTagInput(''); setIsTagInputFocused(false); 
     }
   };
 
   const removeTag = (tagToRemove) => {
-    setCurrentCard({ ...currentCard, tags: currentCard.tags.filter(t => t !== tagToRemove) });
+    const currentTags = currentCard.tags || [];
+    setCurrentCard({ ...currentCard, tags: currentTags.filter(t => t !== tagToRemove) });
   };
 
   const renderFormattedContent = (text) => {
@@ -366,7 +426,7 @@ export default function TagMindApp() {
       const parts = content.split(/\[\[(.*?)\]\]/g);
       const renderedLine = parts.map((part, i) => {
         if (i % 2 === 1) {
-          const targetExists = cards.some(c => c.title === part);
+          const targetExists = cards.some(c => (c.title || '') === part);
           return (
             <button key={i} onClick={() => handleLinkClick(part)}
               className={`inline-block px-1.5 py-0.5 mx-0.5 rounded cursor-pointer font-medium transition-colors border-b-2
@@ -411,13 +471,11 @@ export default function TagMindApp() {
           <h1 className="text-xl font-bold flex items-center gap-2 text-indigo-600">
             <Network className="w-6 h-6" /> TagMind
           </h1>
-          {/* 手機版關閉側邊欄按鈕 */}
           <button className="md:hidden p-2 text-slate-400 hover:text-slate-600" onClick={() => setIsMobileSidebarOpen(false)}>
             <X className="w-5 h-5" />
           </button>
         </div>
         
-        {/* 電腦版「新增卡片」按鈕 */}
         <div className="p-4 hidden md:block">
           <button onClick={() => openCardModal()} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-2 px-4 rounded-lg flex items-center justify-center gap-2 shadow-md">
             <Plus className="w-4 h-4" /> 新增卡片
@@ -449,15 +507,11 @@ export default function TagMindApp() {
 
         {/* 底部使用者狀態與登入區塊 */}
         <div className="p-4 border-t border-slate-200 bg-slate-50 pb-8 md:pb-4">
-          {isLoggingIn ? (
-            <div className="text-sm text-slate-500 flex justify-center items-center py-2">
-              <span className="animate-pulse">登入中...</span>
-            </div>
-          ) : user && !user.isAnonymous ? (
+          {user && !user.isAnonymous ? (
             <div className="flex flex-col gap-2">
               <div className="flex items-center gap-2 text-sm text-slate-700 font-medium truncate">
                 <User className="w-4 h-4 text-indigo-600 shrink-0" />
-                <span className="truncate" title={user.displayName || user.email}>{user.displayName || user.email || '已登入'}</span>
+                <span className="truncate" title={user.email || user.displayName}>{user.email || user.displayName || '已登入'}</span>
               </div>
               <button onClick={() => signOut(auth)} className="text-xs text-slate-500 hover:text-red-600 flex items-center gap-1 transition-colors w-fit">
                 <LogOut className="w-3 h-3" /> 登出
@@ -469,8 +523,8 @@ export default function TagMindApp() {
                 <span className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse"></span>
                 訪客模式 (未同步)
               </div>
-              <button onClick={handleGoogleLogin} className="w-full bg-white border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50 text-indigo-600 text-xs py-2 px-3 rounded-md flex items-center justify-center gap-1.5 transition-all shadow-sm font-medium">
-                <LogIn className="w-3 h-3" /> 登入 Google 以同步
+              <button onClick={() => { setIsAuthModalOpen(true); setIsMobileSidebarOpen(false); }} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white text-xs py-2 px-3 rounded-md flex items-center justify-center gap-1.5 transition-all shadow-sm font-medium">
+                <LogIn className="w-3 h-3" /> 登入 / 註冊以同步
               </button>
             </div>
           )}
@@ -482,26 +536,16 @@ export default function TagMindApp() {
         {/* 頂部導航列 */}
         <div className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-3 sm:px-6 shadow-sm z-10 gap-2">
           
-          {/* 手機版開啟側邊欄漢堡按鈕 */}
-          <button 
-            className="md:hidden p-2 text-slate-500 hover:text-indigo-600 hover:bg-slate-100 rounded-lg shrink-0" 
-            onClick={() => setIsMobileSidebarOpen(true)}
-          >
+          <button className="md:hidden p-2 text-slate-500 hover:text-indigo-600 hover:bg-slate-100 rounded-lg shrink-0" onClick={() => setIsMobileSidebarOpen(true)}>
             <Menu className="w-6 h-6" />
           </button>
 
-          {/* 搜尋列 */}
           <div className="flex items-center gap-2 sm:gap-4 bg-slate-100 px-3 py-1.5 sm:py-2 rounded-full flex-1 max-w-md border border-slate-200 focus-within:ring-2 focus-within:ring-indigo-200 transition-all">
             <Search className="w-4 h-4 text-slate-400 shrink-0" />
             <input type="text" placeholder="搜尋卡片..." className="bg-transparent border-none outline-none text-sm w-full" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
-            {searchTerm && (
-               <button onClick={() => setSearchTerm('')} className="text-slate-400 hover:text-slate-600">
-                  <X className="w-4 h-4" />
-               </button>
-            )}
+            {searchTerm && <button onClick={() => setSearchTerm('')} className="text-slate-400 hover:text-slate-600"><X className="w-4 h-4" /></button>}
           </div>
           
-          {/* 視圖切換 */}
           <div className="flex items-center gap-1 sm:gap-2 bg-slate-100 p-1 rounded-lg border border-slate-200 shrink-0">
             <button onClick={() => setViewMode('grid')} className={`p-1.5 sm:p-2 rounded-md transition-all ${viewMode === 'grid' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500'}`}><Grid className="w-4 h-4 sm:w-5 sm:h-5" /></button>
             <button onClick={() => setViewMode('network')} className={`p-1.5 sm:p-2 rounded-md transition-all ${viewMode === 'network' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500'}`}><Network className="w-4 h-4 sm:w-5 sm:h-5" /></button>
@@ -519,13 +563,13 @@ export default function TagMindApp() {
               ) : (
                 filteredCards.map(card => (
                   <div key={card.id} onClick={() => openCardModal(card)} className="group bg-white rounded-xl p-4 sm:p-5 border border-slate-200 shadow-sm hover:shadow-lg cursor-pointer flex flex-col h-56 sm:h-64 transition-all active:scale-[0.98]">
-                    <h3 className="font-bold text-lg text-slate-800 mb-2 line-clamp-1 group-hover:text-indigo-600">{card.title}</h3>
+                    <h3 className="font-bold text-lg text-slate-800 mb-2 line-clamp-1 group-hover:text-indigo-600">{card.title || '無標題'}</h3>
                     <p className="text-slate-600 text-sm mb-4 line-clamp-4 sm:line-clamp-5 flex-1 whitespace-pre-wrap">
-                      {card.content.replace(/\[\[(.*?)\]\]/g, '$1').replace(/^[-*]\s+\[\s\]\s+/gm, '☐ ').replace(/^[-*]\s+\[[xX]\]\s+/gm, '☑ ')}
+                      {(card.content || '').replace(/\[\[(.*?)\]\]/g, '$1').replace(/^[-*]\s+\[\s\]\s+/gm, '☐ ').replace(/^[-*]\s+\[[xX]\]\s+/gm, '☑ ')}
                     </p>
                     <div className="flex flex-wrap gap-2 mt-auto pt-4 border-t border-slate-100">
-                      {card.tags.slice(0, 3).map(tag => <span key={tag} className={`text-xs px-2 py-0.5 rounded-full border ${getTagColor(tag)}`}>#{tag}</span>)}
-                      {card.tags.length > 3 && <span className="text-xs text-slate-400 px-1">+{card.tags.length - 3}</span>}
+                      {(card.tags || []).slice(0, 3).map(tag => <span key={tag} className={`text-xs px-2 py-0.5 rounded-full border ${getTagColor(tag)}`}>#{tag}</span>)}
+                      {(card.tags || []).length > 3 && <span className="text-xs text-slate-400 px-1">+{(card.tags || []).length - 3}</span>}
                     </div>
                   </div>
                 ))
@@ -539,13 +583,58 @@ export default function TagMindApp() {
         </div>
       </div>
 
-      {/* --- 手機專屬「懸浮新增按鈕 (FAB)」 --- */}
-      <button 
-        onClick={() => openCardModal()} 
-        className="md:hidden fixed bottom-6 right-6 bg-indigo-600 hover:bg-indigo-700 text-white p-4 rounded-full shadow-2xl z-30 transition-transform active:scale-95"
-      >
+      <button onClick={() => openCardModal()} className="md:hidden fixed bottom-6 right-6 bg-indigo-600 hover:bg-indigo-700 text-white p-4 rounded-full shadow-2xl z-30 transition-transform active:scale-95">
         <Plus className="w-6 h-6" />
       </button>
+
+      {/* --- 獨立登入/註冊 Modal --- */}
+      {isAuthModalOpen && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
+          <div className="bg-white w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+              <h2 className="text-lg font-bold text-slate-800">{isLoginMode ? '登入帳號' : '註冊新帳號'}</h2>
+              <button onClick={() => setIsAuthModalOpen(false)} className="text-slate-400 hover:text-slate-600"><X className="w-5 h-5" /></button>
+            </div>
+            
+            <form onSubmit={handleEmailAuth} className="p-6 flex flex-col gap-4">
+              {authError && <div className="text-xs text-red-600 bg-red-50 p-2 rounded">{authError}</div>}
+              
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-slate-500 flex items-center gap-1"><Mail className="w-3 h-3"/> 電子信箱</label>
+                <input type="email" required value={authEmail} onChange={e => setAuthEmail(e.target.value)} 
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:border-indigo-500 text-sm" placeholder="your@email.com" />
+              </div>
+              
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-slate-500 flex items-center gap-1"><Lock className="w-3 h-3"/> 密碼</label>
+                <input type="password" required value={authPassword} onChange={e => setAuthPassword(e.target.value)} 
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:border-indigo-500 text-sm" placeholder="至少 6 個字元" />
+              </div>
+
+              <button type="submit" disabled={isLoggingIn} className="w-full mt-2 bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2.5 rounded-lg shadow-md transition-all active:scale-95 disabled:opacity-50">
+                {isLoggingIn ? '處理中...' : (isLoginMode ? '登入' : '註冊')}
+              </button>
+
+              <div className="text-center mt-2">
+                <button type="button" onClick={() => { setIsLoginMode(!isLoginMode); setAuthError(''); }} className="text-xs text-indigo-600 hover:underline">
+                  {isLoginMode ? '還沒有帳號？點此註冊' : '已經有帳號？點此登入'}
+                </button>
+              </div>
+
+              <div className="relative flex py-2 items-center">
+                <div className="flex-grow border-t border-slate-200"></div>
+                <span className="flex-shrink-0 mx-4 text-slate-400 text-xs">或者用瀏覽器</span>
+                <div className="flex-grow border-t border-slate-200"></div>
+              </div>
+
+              <button type="button" onClick={handleGoogleLogin} className="w-full bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-medium py-2.5 rounded-lg shadow-sm transition-all flex items-center justify-center gap-2 text-sm">
+                <svg className="w-4 h-4" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/><path fill="none" d="M1 1h22v22H1z"/></svg>
+                Google 登入
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* --- 編輯器/閱讀器 Modal --- */}
       {isModalOpen && (
@@ -578,12 +667,12 @@ export default function TagMindApp() {
             <div className="p-4 sm:p-6 overflow-y-auto flex-1 relative">
               {modalMode === 'edit' ? (
                  <>
-                    <input type="text" placeholder="卡片標題" value={currentCard.title} onChange={(e) => setCurrentCard({ ...currentCard, title: e.target.value })}
+                    <input type="text" placeholder="卡片標題" value={currentCard.title || ''} onChange={(e) => setCurrentCard({ ...currentCard, title: e.target.value })}
                       className={`w-full text-xl sm:text-2xl font-bold text-slate-800 placeholder:text-slate-300 border-b-2 outline-none bg-transparent mb-2 pb-1 ${isDuplicateTitle ? 'border-red-400' : 'border-transparent focus:border-indigo-300'}`} autoFocus={!currentCard.id} />
                     {isDuplicateTitle && <p className="text-sm text-red-500 mb-4">⚠️ 此標題已存在，請修改。</p>}
 
                     <div className="mb-2 min-h-[200px] sm:min-h-[150px] flex-1">
-                      <textarea placeholder="寫下你的靈感..." value={currentCard.content} onChange={(e) => setCurrentCard({ ...currentCard, content: e.target.value })}
+                      <textarea placeholder="寫下你的靈感..." value={currentCard.content || ''} onChange={(e) => setCurrentCard({ ...currentCard, content: e.target.value })}
                         className="w-full h-full min-h-[30vh] sm:min-h-[250px] resize-none text-base sm:text-lg text-slate-600 placeholder:text-slate-300 border-none outline-none bg-transparent leading-relaxed" />
                     </div>
                     
@@ -598,18 +687,17 @@ export default function TagMindApp() {
                  </>
               ) : (
                  <>
-                    <h1 className="text-xl sm:text-2xl font-bold text-slate-800 mb-4 sm:mb-6">{currentCard.title}</h1>
+                    <h1 className="text-xl sm:text-2xl font-bold text-slate-800 mb-4 sm:mb-6">{currentCard.title || '無標題'}</h1>
                     <div className="text-slate-700 leading-relaxed text-base sm:text-lg">
                        {renderFormattedContent(currentCard.content)}
                     </div>
                  </>
               )}
 
-              {/* 標籤區塊 */}
               <div className="border-t border-slate-100 pt-4 mt-6 sm:mt-8 pb-4">
                 <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 block">標籤</label>
                 <div className="flex flex-wrap gap-2 mb-3">
-                  {currentCard.tags.map(tag => (
+                  {(currentCard.tags || []).map(tag => (
                     <span key={tag} className={`px-2.5 sm:px-3 py-1 rounded-full text-xs sm:text-sm flex items-center gap-1 shadow-sm ${getTagColor(tag)}`}>
                       <Tag className="w-3 h-3" />{tag}
                       {modalMode === 'edit' && <button onClick={() => removeTag(tag)} className="ml-1 hover:text-black/50 p-0.5"><X className="w-3 h-3" /></button>}
@@ -647,8 +735,8 @@ export default function TagMindApp() {
 
             {modalMode === 'edit' && (
                <div className="p-3 sm:p-4 border-t border-slate-100 bg-slate-50 flex justify-end pb-8 sm:pb-4">
-                  <button onClick={handleSaveCard} disabled={isDuplicateTitle || !currentCard.title.trim()}
-                   className={`w-full sm:w-auto px-6 py-3 sm:py-2 rounded-xl sm:rounded-lg font-bold sm:font-medium flex items-center justify-center gap-2 shadow-md ${isDuplicateTitle || !currentCard.title.trim() ? 'bg-slate-300 text-slate-500 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700 text-white'}`}>
+                  <button onClick={handleSaveCard} disabled={isDuplicateTitle || !(currentCard.title || '').trim()}
+                   className={`w-full sm:w-auto px-6 py-3 sm:py-2 rounded-xl sm:rounded-lg font-bold sm:font-medium flex items-center justify-center gap-2 shadow-md ${isDuplicateTitle || !(currentCard.title || '').trim() ? 'bg-slate-300 text-slate-500 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700 text-white'}`}>
                    <Save className="w-5 h-5 sm:w-4 sm:h-4" /> 儲存卡片
                  </button>
                </div>
